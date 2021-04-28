@@ -25,8 +25,7 @@ class IterLoader:
         self.iter = None
 
     def __len__(self):
-        if (self.length is not None):
-            return self.length
+        if (self.length is not None): return self.length
         return len(self.loader)
 
     def new_epoch(self):
@@ -258,7 +257,7 @@ def CIFAR10Loader_iter(root, batch_size, split='train', num_workers=2, aug=None,
     dataset = CIFAR10Data(root, split, aug, target_list)
     if new_labels is not None: dataset.targets = new_labels
     loader = data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
-    return IterLoader(loader, length=iters)
+    return loader#IterLoader(loader, length=iters)#loader#
 
 def CIFAR10LoaderMix(root, batch_size, split='train', num_workers=2, aug=None, shuffle=True, labeled_list=range(5), unlabeled_list=range(5, 10), new_labels=None):
     if aug==None:

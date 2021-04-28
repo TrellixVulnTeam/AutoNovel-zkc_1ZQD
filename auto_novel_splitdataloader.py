@@ -15,11 +15,9 @@ import numpy as np
 import os
 import faiss
 
-# from loss import MaximalCodingRateReduction
-# MCR = MaximalCodingRateReduction(gam1=20., gam2=0.5, eps=0.5)
+from loss import CrossEntropyLabelSmooth
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
-
+# os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 def smooth_loss(feat,mask_lb):
 
@@ -75,7 +73,7 @@ def _update_ema_variables(model, ema_model, alpha, global_step):
     for (ema_name, ema_param), (model_name, param) in zip(ema_model.named_parameters(), model.named_parameters()):
         ema_param.data.mul_(alpha).add_(1 - alpha, param.data)
 
-def train(model, model_ema, labeled_train_loader, labeled_eval_loader_test, unlabeled_eval_loader_train, args):
+def train(model, model_ema, unlabeled_eval_loader_test, unlabeled_eval_loader_train, args):
 
 
     # args.head = 'head2'
@@ -90,18 +88,19 @@ def train(model, model_ema, labeled_train_loader, labeled_eval_loader_test, unla
     # unlabeled_train_loader = CIFAR10Loader_iter(root=args.dataset_root, batch_size=args.batch_size // 2, split='train',
     #                                             aug='twice', shuffle=True, target_list=range(args.num_labeled_classes, num_classes),new_labels=target_label)
 
-
+    labeled_train_loader = CIFAR10Loader_iter(root=args.dataset_root, batch_size=args.batch_size // 2, split='train',
+                                              aug='twice', shuffle=True, target_list=range(args.num_labeled_classes))
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.step_size, gamma=args.gamma)
     criterion1 = nn.CrossEntropyLoss() 
-    criterion2 = BCE() 
+    criterion2 = BCE()
+    criterion3 = CrossEntropyLabelSmooth(num_classes=args.num_unlabeled_classes)
     for epoch in range(args.epochs):
         loss_record = AverageMeter()
         model.train()
         model_ema.train()
         exp_lr_scheduler.step()
         w = args.rampup_coefficient * ramps.sigmoid_rampup(epoch, args.rampup_length)
-
 
         iters = 400
 
@@ -123,12 +122,13 @@ def train(model, model_ema, labeled_train_loader, labeled_eval_loader_test, unla
                                                         new_labels=target_label)
             # model.head2.weight.data.copy_(
             #     torch.from_numpy(F.normalize(target_centers, axis=1)).float().cuda())
-        labeled_train_loader.new_epoch()
-        unlabeled_train_loader.new_epoch()
-        for batch_idx,_ in enumerate(range(iters)):
 
-            ((x_l, x_bar_l), label_l, idx) = labeled_train_loader.next()
-            ((x_u, x_bar_u), label_u, idx) = unlabeled_train_loader.next()
+        # labeled_train_loader.new_epoch()
+        # unlabeled_train_loader.new_epoch()
+        # for batch_idx,_ in enumerate(range(iters)):
+        #     ((x_l, x_bar_l), label_l, idx) = labeled_train_loader.next()
+        #     ((x_u, x_bar_u), label_u, idx) = unlabeled_train_loader.next()
+        for batch_idx, (((x_l, x_bar_l), label_l, idx),((x_u, x_bar_u), label_u, idx)) in enumerate(zip(labeled_train_loader,unlabeled_train_loader)):
 
             x = torch.cat([x_l,x_u],dim=0)
             x_bar = torch.cat([x_bar_l,x_bar_u],dim=0)
@@ -148,9 +148,12 @@ def train(model, model_ema, labeled_train_loader, labeled_eval_loader_test, unla
 
             mask_lb = label<args.num_labeled_classes
 
-            loss_ce = criterion1(output1[mask_lb], label[mask_lb]) + criterion1(output2[~mask_lb], label[~mask_lb]-5)
+            loss_ce_label   = criterion1(output1[mask_lb], label[mask_lb])
+            loss_ce_unlabel = criterion1(output2[~mask_lb], label[~mask_lb]-5)#torch.tensor(0)#
 
-            loss_bce = rank_bce(criterion2,feat,mask_lb,prob2,prob2_bar)
+            loss_ce = loss_ce_label + loss_ce_unlabel
+
+            loss_bce = rank_bce(criterion2,feat,mask_lb,prob2,prob2_bar)#torch.tensor(0)#
 
             consistency_loss = F.mse_loss(prob1, prob1_bar) + F.mse_loss(prob2, prob2_bar)
             consistency_loss_ema = F.mse_loss(prob1, prob1_bar_ema) + F.mse_loss(prob2, prob2_bar_ema)
@@ -163,17 +166,19 @@ def train(model, model_ema, labeled_train_loader, labeled_eval_loader_test, unla
             optimizer.step()
             _update_ema_variables(model, model_ema, 0.99, epoch * iters + batch_idx)
 
-            if batch_idx%20==0:print('Train Epoch: {}, iter {}/{} Avg Loss: {:.4f}'.format(epoch, batch_idx, 400, loss_record.avg))
+            if batch_idx%200==0:
+                print('Train Epoch: {}, iter {}/{} unl-CE Loss: {:.4f}, l-CE Loss: {:.4f}, BCE Loss: {:.4f}, CL Loss: {:.4f}, Avg Loss: {:.4f}'
+                      .format(epoch, batch_idx, 400, loss_ce_unlabel.item(), loss_ce_label.item(), loss_bce.item(), consistency_loss.item(), loss_record.avg))
         print('Train Epoch: {} Avg Loss: {:.4f}'.format(epoch, loss_record.avg))
-        print('test on labeled classes')
-        args.head = 'head1'
-        test(model, labeled_eval_loader_test, args)
+        # print('test on labeled classes')
+        # args.head = 'head1'
+        # test(model, labeled_eval_loader_test, args)
 
 
         # print('test on unlabeled classes')
-        # args.head= 'head2'
-        # # test(model, unlabeled_eval_loader_train, args)
-        # feats = test(model_ema, unlabeled_eval_loader_train, args)
+        args.head= 'head2'
+        # test(model, unlabeled_eval_loader_train, args)
+        test(model_ema, unlabeled_eval_loader_test, args)
 
 def train_IL(model, train_loader, labeled_eval_loader, unlabeled_eval_loader, args):
     optimizer = SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -251,6 +256,7 @@ def test(model, test_loader, args):
     acc, nmi, ari = cluster_acc(targets.astype(int), preds.astype(int)), nmi_score(targets, preds), ari_score(targets, preds) 
     print('Test acc {:.4f}, nmi {:.4f}, ari {:.4f}'.format(acc, nmi, ari))
     return feats
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(
@@ -301,15 +307,12 @@ if __name__ == "__main__":
             if 'head' not in name and 'layer4' not in name:
                 param.requires_grad = False
 
-    labeled_train_loader = CIFAR10Loader_iter(root=args.dataset_root, batch_size=args.batch_size // 2, split='train',
-                                              aug='twice', shuffle=True, target_list=range(args.num_labeled_classes))
-
     unlabeled_eval_loader_train = CIFAR10Loader(root=args.dataset_root, batch_size=args.batch_size, split='train', aug=None , shuffle=False, target_list = range(args.num_labeled_classes, num_classes))
     unlabeled_eval_loader_test = CIFAR10Loader(root=args.dataset_root, batch_size=args.batch_size, split='test' , aug=None , shuffle=False, target_list = range(args.num_labeled_classes, num_classes))
     labeled_eval_loader_test   = CIFAR10Loader(root=args.dataset_root, batch_size=args.batch_size, split='test' , aug=None , shuffle=False, target_list = range(args.num_labeled_classes))
 
     if args.mode == 'train':
-        train(model, model_ema, labeled_train_loader, labeled_eval_loader_test, unlabeled_eval_loader_train, args)
+        train(model, model_ema, unlabeled_eval_loader_test, unlabeled_eval_loader_train, args)
         torch.save(model.state_dict(), args.model_dir)
         print("model saved to {}.".format(args.model_dir))
     else:

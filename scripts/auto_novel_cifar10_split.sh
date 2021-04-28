@@ -10,9 +10,9 @@ python auto_novel_splitdataloader.py \
         --step_size 170 \
         --batch_size 128 \
         --epochs 200 \
-        --rampup_length 50 \
-        --rampup_coefficient 5.0 \
+        --rampup_length 150 \
+        --rampup_coefficient 50 \
         --dataset_name cifar10 \
-        --seed 0 \
+        --seed 1 \
         --model_name resnet_cifar10 \
         --mode train

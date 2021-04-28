@@ -1,0 +1,2 @@
+from .crossentropy import CrossEntropyLabelSmooth,SoftEntropy
+from .MCR_loss import MaximalCodingRateReduction

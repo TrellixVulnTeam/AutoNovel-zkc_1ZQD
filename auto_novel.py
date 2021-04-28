@@ -15,7 +15,6 @@ import numpy as np
 import os
 
 from loss import MaximalCodingRateReduction
-
 MCR = MaximalCodingRateReduction(gam1=20., gam2=0.5, eps=0.5)
 
 
@@ -98,7 +97,6 @@ def train(model, model_ema, train_loader, labeled_eval_loader, unlabeled_eval_lo
             prob1_ema, prob1_bar_ema, prob2_ema, prob2_bar_ema = F.softmax(output1_ema, dim=1),  F.softmax(output1_bar_ema, dim=1), F.softmax(output2_ema, dim=1), F.softmax(output2_bar_ema, dim=1)
 
             mask_lb = label<args.num_labeled_classes
-
 
             loss_ce = criterion1(output1[mask_lb], label[mask_lb])
             loss_bce = rank_bce(criterion2,feat,mask_lb,prob2,prob2_bar)
