@@ -11,20 +11,43 @@ import os.path
 import datetime
 import numpy as np
 
+class MemoryBank(nn.Module):
+    def __init__(self, num_features, num_classes, num_samples=25000, temp=0.05, momentum=0.2):
+        super(MemoryBank, self).__init__()
+        self.num_features = num_features
+        self.num_samples = num_samples
+
+        self.momentum = momentum
+        self.temp = temp
+
+        self.register_buffer('prototypes', torch.zeros(num_classes, num_features))
+        #self.register_buffer('features', torch.zeros(num_samples, num_features))
+        self.register_buffer('labels', torch.zeros(num_samples).long())
+
+    def forward(self, x):
+        out = torch.matmul(x, self.prototypes.clone().detach().transpose(1,0))/self.temp
+        return out
+
 class ResNet(nn.Module):
     def __init__(self, block, num_blocks, num_labeled_classes=5, num_unlabeled_classes=5):
         super(ResNet, self).__init__()
         self.in_planes = 64
 
-        self.conv1    = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1      = nn.BatchNorm2d(64)
-        self.layer1   = self._make_layer(block, 64, num_blocks[0], stride=1)
-        self.layer2   = self._make_layer(block, 128, num_blocks[1], stride=2)
-        self.layer3   = self._make_layer(block, 256, num_blocks[2], stride=2)
-        self.layer4   = self._make_layer(block, 512, num_blocks[3], stride=2)
-        self.head1 = nn.Linear(512*block.expansion, num_labeled_classes)
-        self.head2 = nn.Linear(512*block.expansion, num_unlabeled_classes)
+        self.conv1  = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1    = nn.BatchNorm2d(64)
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.head1  = nn.Linear(512*block.expansion, num_labeled_classes)
+        #self.head2 = nn.Linear(512*block.expansion, num_unlabeled_classes)
+        self.memory = MemoryBank(512, num_unlabeled_classes+num_labeled_classes)
 
+        self.mlp = nn.Sequential(
+            nn.Linear(512*block.expansion, 512*block.expansion),
+            nn.ReLU(inplace=True),
+            nn.Linear(512*block.expansion, 128)
+        )
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
         layers = []
@@ -42,9 +65,14 @@ class ResNet(nn.Module):
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = F.relu(out) #add ReLU to benifit ranking
+
         out1 = self.head1(out)
-        out2 = self.head2(out)
-        return out1, out2, out
+        #out2 = self.head2(out)
+        mb_feat = self.mlp(out)
+        out_ = out
+        out_ = F.normalize(out_, p=2, dim=1)
+        out2 = self.memory(out_)
+        return out1, out2, out, mb_feat
 
 class BasicBlock(nn.Module):
     expansion = 1

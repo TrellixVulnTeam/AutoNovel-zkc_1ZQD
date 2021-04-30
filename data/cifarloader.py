@@ -255,7 +255,8 @@ def CIFAR10Loader(root, batch_size, split='train', num_workers=2, aug=None, shuf
 
 def CIFAR10Loader_iter(root, batch_size, split='train', num_workers=2, aug=None, shuffle=True, target_list=range(5), iters=400, new_labels=None):
     dataset = CIFAR10Data(root, split, aug, target_list)
-    if new_labels is not None: dataset.targets = new_labels
+    if new_labels is not None:
+        dataset.targets = new_labels
     loader = data.DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
     return loader#IterLoader(loader, length=iters)#loader#
 
